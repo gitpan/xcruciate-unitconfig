@@ -1,6 +1,1 @@
-Revision history for Perl extension Xcruciate::UnitConfig.
-
-0.01  Sat Jan 10 18:32:00 2009
-	- original version; created by h2xs 1.23 with options
-		-X -n Xcruciate::UnitConfig
-
+Run pod2text (or something) on the module to view the change log.
