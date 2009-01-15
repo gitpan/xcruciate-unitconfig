@@ -4,7 +4,7 @@ package Xcruciate::UnitConfig;
 use Exporter;
 @ISA = ('Exporter');
 @EXPORT = qw();
-our $VERSION = 0.04;
+our $VERSION = 0.05;
 
 use strict;
 use Xcruciate::Utils;
@@ -63,7 +63,7 @@ my $xac_settings =
     'clean_states_path',          ['scalar',0,'path'],
     'config_type',                ['scalar',0,'word'],
     'current_states_path',        ['scalar',0,'path'],
-    'debug_level',                ['scalar',0,'integer' ,0,    127],
+    'debug_level',                ['scalar',0,'debug_list'],
     'debug_log_path',             ['scalar',0,'abs_create','rw'],
     'error_log_path',             ['scalar',0,'abs_create','rw'],
     'listen_on',                  ['scalar',0,'ip'],
@@ -157,7 +157,7 @@ sub new {
 	push @errors,sprintf("No name attribute for element '%s'",$entry->nodeName) unless $entry->hasAttribute('name');
 	my $entry_record = $xac_settings->{$entry->getAttribute('name')} ||  $xte_settings->{$entry->getAttribute('name')};
 	if (not defined $entry_record) {
-	    next;
+	    warn "Unknown unit config entry '" . ($entry->getAttribute('name')) ."'";
 	} elsif (not($entry->nodeName eq $entry_record->[0])){
 	    push @errors,sprintf("Entry called %s should be a %s not a %s",$entry->getAttribute('name'),$entry_record->[0],$entry->nodeName);
 	} elsif ((not $entry->textContent) and ((not $entry_record->[1]) or $entry->textContent!~/^\s*$/s)) {
@@ -236,6 +236,8 @@ sub xac_file_format_description {
 	    $ret .= " - 'yes' or 'no'";
 	} elsif ($record->[2] eq 'email') {
 	    $ret .= " - email address";
+	} elsif ($record->[2] eq 'debug_list') {
+	    $ret .= " - comma-separated list of debugging options (or 'all'/'none')";
 	} elsif ($record->[2] eq 'abs_dir') {
 	    $ret .= " - absolute directory path with $record->[3] permissions";
 	} elsif ($record->[2] eq 'abs_file') {
@@ -1019,6 +1021,8 @@ B<0.01>: First upload
 B<0.03>: First upload including module
 
 B<0.04> Changed minimum perl version to 5.8.8
+
+B<0.05> Added debug_list data type. Warn about unknown entries
 
 =back
 
