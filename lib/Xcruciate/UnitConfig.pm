@@ -4,10 +4,10 @@ package Xcruciate::UnitConfig;
 use Exporter;
 @ISA = ('Exporter');
 @EXPORT = qw();
-our $VERSION = 0.05;
+our $VERSION = 0.06;
 
 use strict;
-use Xcruciate::Utils;
+use Xcruciate::Utils 0.06;
 
 =head1 NAME
 
@@ -56,7 +56,7 @@ None
 
 my $xac_settings =
 {
-    'accept_from',                ['scalar',0,'ip'],
+    'accept_from',                ['scalar',1,'word'],
     'access_log_path',            ['scalar',0,'abs_create','rw'],
     'boot_log_path',              ['scalar',0,'abs_create','rw'],
     'chime_multiplier',           ['scalar',0,'integer', 2],
@@ -121,12 +121,22 @@ my $xte_settings =
     'xca_time_display_function',  ['scalar',1,'function_name']
 };
 
+my $stop_settings = {
+    'listen_on' => 1,
+    'port' => 1,
+    'start_xte'=>1,
+    'xte_host' => 1,
+    'xte_port' => 1
+};
+
 =head1 CREATOR METHODS
 
-=head2 new(config_file_path [,verbose])
+=head2 new(config_file_path [,verbose,stop_only])
 
 Creates and returns an Xcruciate::XcruciateConfig object which can then be queried.
-If the optional verbose argument is perlishly true it  will show its working to STDOUT.
+If the optional verbose argument is perlishly true it  will show its working to STDOUT. If
+the stop_only argument is perlishly true it will only bother about the information needed
+to stop processes (ie hosts and ports).
 At present it looks for configuration errors and die noisily if it finds any.
 This is useful behaviour for management scripts - continuing to set up server daemons
 on the basis of broken configurations is not best practice - but non-fatal error
@@ -139,41 +149,73 @@ sub new {
     my $path = shift;
     my $verbose = 0;
     $verbose = shift if defined $_[0];
+    my $stop_only = shift;
+    my $stop_only_parse_text = "";
+    $stop_only_parse_text = " (hosts and ports only)" if $stop_only;
     my $self = {};
 
+    # Check that there's a file at the end of the config file option
     Xcruciate::Utils::check_path('unit config file',$path,'r');
-    print "Attempting to parse xacd config file... " if $verbose;
+
+    # Parse config file
+    print "Attempting to parse xacd config file$stop_only_parse_text... " if $verbose;
     my $parser = XML::LibXML->new();
     my $xac_dom = $parser->parse_file($path);
     print "done\n" if $verbose;
+
+    #Bail out if config file isn't even close to what is expected
     my @config = $xac_dom->findnodes("/config/scalar");
     die "Config file doesn't look anything like a config file - 'xcruciate file_help' for some clues" unless $config[0];
     my @config_type = $xac_dom->findnodes("/config/scalar[\@name='config_type']/text()");
     die "config_type entry not found in unit config file" unless $config_type[0];
     my $config_type = $config_type[0]->toString;
     die "config_type in unit config file is '$config_type' (should be 'unit') - are you confusing xcruciate and unit config files?" unless $config_type eq 'unit';
+
+    # Work through config options in config file
     my @errors = ();
     foreach my $entry ($xac_dom->findnodes("/config/*[(local-name() = 'scalar') or (local-name() = 'list')]")) {
+	# Does it have a name attribute?
 	push @errors,sprintf("No name attribute for element '%s'",$entry->nodeName) unless $entry->hasAttribute('name');
 	my $entry_record = $xac_settings->{$entry->getAttribute('name')} ||  $xte_settings->{$entry->getAttribute('name')};
+
+	#Skip checks if stop_only and this entry isn't needed to stop
+	next if ($stop_only and not($stop_settings->{$entry->getAttribute('name')}));
+
+	# Warn about entries in config file that are not defined, but continue.
 	if (not defined $entry_record) {
 	    warn "Unknown unit config entry '" . ($entry->getAttribute('name')) ."'";
 	} elsif (not($entry->nodeName eq $entry_record->[0])){
+
+	    # Is it a scalar or list as expected?
 	    push @errors,sprintf("Entry called %s should be a %s not a %s",$entry->getAttribute('name'),$entry_record->[0],$entry->nodeName);
 	} elsif ((not $entry->textContent) and ((not $entry_record->[1]) or $entry->textContent!~/^\s*$/s)) {
+
+	    #Entry, but value missing and not optional
 	    push @errors,sprintf("Entry called %s requires a value",$entry->getAttribute('name'))
 	} elsif (($entry->nodeName eq 'scalar')  and $entry_record->[2] and ((not $entry_record->[1]) or $entry->textContent!~/^\s*$/s or $entry->textContent)){
+
+	    #Entry is a scalar - type check
 	    push @errors,Xcruciate::Utils::type_check($self,$entry->getAttribute('name'),$entry->textContent,$entry_record);
 	} elsif (($entry->nodeName eq 'list') and $entry_record){
+
+	    #Entry is a list...
+
+	    #Non-optional list entries require at least one item
 	    my @items = $entry->findnodes('item/text()');
 	    push @errors,sprintf("Entry called %s requires at least one item",$entry->getAttribute('name')) if ((not $entry_record->[2]) and (not @items));
+
+	    # Type check each item in list
 	    my $count = 1;
 	    foreach my $item (@items) {
 		push @errors,Xcruciate::Utils::type_check($self,$entry->getAttribute('name'),$item->textContent,$entry_record,$count);
 		$count++;
 	    }
 	}
+
+	# Duplicate entries not allowed
 	push @errors,sprintf("Duplicate entry called %s",$entry->getAttribute('name')) if defined $self->{$entry->getAttribute('name')};
+
+	# Add entry value to object hash
 	if ($entry->nodeName eq 'scalar') {
 	    $self->{$entry->getAttribute('name')} = $entry->textContent;
 	} else {
@@ -183,14 +225,20 @@ sub new {
 	    }
 	    }
     }
+
+    # Report missing entries
     foreach my $entry (keys %{$xac_settings}) {
+	next if ($stop_only and not($stop_settings->{$entry}));
 	push @errors,sprintf("No xacerbate entry called %s",$entry) unless ((defined $self->{$entry}) or ($xac_settings->{$entry}->[1]));
     }
     if ((defined $self->{start_xte}) and ($self->{start_xte} eq "yes")) {
 	foreach my $entry (keys %{$xte_settings}) {
+	    next if ($stop_only and not($stop_settings->{$entry}));
 	    push @errors, sprintf("No xteriorize entry called %s",$entry) unless ((defined $self->{$entry}) or ($xte_settings->{$entry}->[1]));
 	}
     }
+
+    # And the final scores are...
     if (@errors) {
 	print join "\n",@errors;
 	print "\n";
@@ -1020,9 +1068,11 @@ B<0.01>: First upload
 
 B<0.03>: First upload including module
 
-B<0.04> Changed minimum perl version to 5.8.8
+B<0.04>: Changed minimum perl version to 5.8.8
 
-B<0.05> Added debug_list data type. Warn about unknown entries
+B<0.05>: Added debug_list data type. Warn about unknown entries
+
+B<0.06>: Added stop_only option to new(), added some comments
 
 =back
 
